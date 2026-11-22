@@ -74,7 +74,7 @@
 
 <script>
   // ===================== CONFIG =====================
-  var FEE   = 3;   // taxa % por cima
+  var QUOTE_API = "https://depix-quote.kirays99.workers.dev/quote";
   var BASE  = "ce091c998b83c78bb71a632313ba3760f1763d9cfcffae02258ffa9865a37bd2";  // USDt
   var QUOTE = "02f22f8d9c76ab41661a2729e4752e2c5d1a263012141b86ea98af5472df5189";  // DePix
   // =================================================
@@ -100,10 +100,22 @@
   }
 
   function computeRate(last){
-    // empurra o ultimo decimal (milesimo) SEMPRE para cima, depois soma a taxa
-    var micro = Math.round(last * 1e6);
-    var base  = (Math.floor(micro / 1000) + 1) / 1000;
-    return base * (1 + FEE/100);
+    var controller = new AbortController();
+    var timer = setTimeout(function(){ controller.abort(); }, 10000);
+    return fetch(QUOTE_API, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({last:last}),
+      signal:controller.signal
+    }).then(function(response){
+      if (!response.ok) throw new Error('Falha ao consultar o serviço de cotação.');
+      return response.json();
+    }).then(function(data){
+      if (typeof data.rate !== 'number' || !Number.isFinite(data.rate) || data.rate <= 0){
+        throw new Error('Resposta inválida do serviço de cotação.');
+      }
+      return data.rate;
+    }).finally(function(){ clearTimeout(timer); });
   }
 
   function render(){
@@ -125,10 +137,10 @@
       fail();
     }, 10000);
 
-    function fail(){
+    function fail(message){
       rate = null;
       elOut.textContent = 'sem conexão'; elOut.className = 'val off';
-      setStatus('err', 'Sem conexão com a SideSwap.', true);
+      setStatus('err', message || 'Sem conexão com a SideSwap.', true);
     }
 
     try{
@@ -151,9 +163,13 @@
         if (close != null){
           done = true; clearTimeout(timer);
           try{ ws.close(); }catch(e){}
-          rate = computeRate(Number(close));
-          setStatus('ok', 'Cotação atualizada', false);
-          render();
+          computeRate(Number(close)).then(function(calculatedRate){
+            rate = calculatedRate;
+            setStatus('ok', 'Cotação atualizada', false);
+            render();
+          }).catch(function(){
+            fail('Falha ao aplicar a cotação no servidor.');
+          });
         }
       }
     };

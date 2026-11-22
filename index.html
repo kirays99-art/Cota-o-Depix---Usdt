@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Calculadora DePix</title>
+<style>
+  :root{
+    --bg:#0b0f17; --card:#131a26; --line:#223049; --txt:#e8eef7;
+    --muted:#8aa0bd; --accent:#37e0a6; --accent2:#2bb3ff; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(1200px 600px at 50% -10%,#16233a 0%,var(--bg) 55%);
+    color:var(--txt); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    display:flex; align-items:center; justify-content:center; padding:20px; min-height:100%;
+  }
+  .card{
+    width:100%; max-width:380px; background:var(--card); border:1px solid var(--line);
+    border-radius:18px; padding:26px 22px; box-shadow:0 20px 60px rgba(0,0,0,.45);
+  }
+  .brand{display:flex; align-items:center; gap:9px; margin-bottom:4px}
+  .dot{width:11px; height:11px; border-radius:50%; background:var(--accent); box-shadow:0 0 12px var(--accent)}
+  h1{font-size:18px; margin:0; font-weight:650; letter-spacing:.2px}
+  .sub{color:var(--muted); font-size:13px; margin:2px 0 20px}
+  label{display:block; font-size:13px; color:var(--muted); margin:0 0 7px 2px}
+  .inwrap{position:relative}
+  .inwrap .cur{
+    position:absolute; left:14px; top:50%; transform:translateY(-50%);
+    color:var(--muted); font-size:17px; pointer-events:none;
+  }
+  input{
+    width:100%; padding:15px 14px 15px 40px; font-size:20px; color:var(--txt);
+    background:#0e1521; border:1px solid var(--line); border-radius:12px; outline:none;
+    transition:border-color .15s;
+  }
+  input:focus{border-color:var(--accent2)}
+  .result{
+    margin-top:18px; background:#0e1521; border:1px solid var(--line); border-radius:12px;
+    padding:16px 14px; text-align:center;
+  }
+  .result .lbl{color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:1px}
+  .result .val{font-size:30px; font-weight:700; margin-top:4px; color:var(--accent)}
+  .result .val.off{color:var(--err); font-size:17px; font-weight:550}
+  .status{display:flex; align-items:center; gap:7px; font-size:12px; color:var(--muted); margin-top:16px; justify-content:center}
+  .status .s-dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  .status.ok .s-dot{background:var(--accent)}
+  .status.err .s-dot{background:var(--err)}
+  .retry{background:none;border:1px solid var(--line);color:var(--muted);border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;margin-left:4px}
+  .retry:hover{border-color:var(--accent2);color:var(--txt)}
+  .foot{text-align:center;color:#50617d;font-size:11px;margin-top:14px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand"><span class="dot"></span><h1>Calculadora DePix</h1></div>
+    <p class="sub">Digite o valor em dólar (USDt) e veja quanto fica em DePix.</p>
+
+    <label for="usd">Valor em dólar (USDt)</label>
+    <div class="inwrap">
+      <span class="cur">$</span>
+      <input id="usd" type="text" inputmode="decimal" placeholder="0" autocomplete="off">
+    </div>
+
+    <div class="result">
+      <div class="lbl">Total em DePix (R$)</div>
+      <div class="val" id="out">—</div>
+    </div>
+
+    <div class="status" id="status"><span class="s-dot"></span><span id="statusTxt">Buscando cotação…</span></div>
+    <div class="foot">Cotação ao vivo via SideSwap</div>
+  </div>
+
+<script>
+  // ===================== CONFIG =====================
+  var FEE   = 3;   // taxa % por cima
+  var BASE  = "ce091c998b83c78bb71a632313ba3760f1763d9cfcffae02258ffa9865a37bd2";  // USDt
+  var QUOTE = "02f22f8d9c76ab41661a2729e4752e2c5d1a263012141b86ea98af5472df5189";  // DePix
+  // =================================================
+
+  var rate = null;
+  var elUsd = document.getElementById('usd');
+  var elOut = document.getElementById('out');
+  var elStatus = document.getElementById('status');
+  var elStatusTxt = document.getElementById('statusTxt');
+  var fmt = new Intl.NumberFormat('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+
+  function setStatus(kind, txt, retry){
+    elStatus.className = 'status' + (kind ? ' '+kind : '');
+    elStatusTxt.textContent = txt;
+    var old = document.getElementById('retryBtn');
+    if (old) old.remove();
+    if (retry){
+      var b = document.createElement('button');
+      b.id = 'retryBtn'; b.className = 'retry'; b.textContent = 'tentar de novo';
+      b.onclick = fetchRate;
+      elStatus.appendChild(b);
+    }
+  }
+
+  function computeRate(last){
+    // empurra o ultimo decimal (milesimo) SEMPRE para cima, depois soma a taxa
+    var micro = Math.round(last * 1e6);
+    var base  = (Math.floor(micro / 1000) + 1) / 1000;
+    return base * (1 + FEE/100);
+  }
+
+  function render(){
+    if (rate === null){ return; }
+    var raw = (elUsd.value || '').replace(',', '.').trim();
+    var usd = parseFloat(raw);
+    if (!raw || isNaN(usd) || usd <= 0){ elOut.textContent = '—'; elOut.className='val'; return; }
+    elOut.className = 'val';
+    elOut.textContent = fmt.format(usd * rate);
+  }
+
+  function fetchRate(){
+    setStatus('', 'Buscando cotação…', false);
+    rate = null; render();
+    var done = false, ws;
+    var timer = setTimeout(function(){
+      if (done) return; done = true;
+      try{ ws.close(); }catch(e){}
+      fail();
+    }, 10000);
+
+    function fail(){
+      rate = null;
+      elOut.textContent = 'sem conexão'; elOut.className = 'val off';
+      setStatus('err', 'Sem conexão com a SideSwap.', true);
+    }
+
+    try{
+      ws = new WebSocket("wss://api.sideswap.io/json-rpc-ws");
+    }catch(e){ clearTimeout(timer); fail(); return; }
+
+    ws.onopen = function(){
+      ws.send(JSON.stringify({
+        id:1, jsonrpc:"2.0", method:"market",
+        params:{ chart_sub:{ asset_pair:{ base:BASE, quote:QUOTE } } }
+      }));
+    };
+    ws.onmessage = function(ev){
+      var obj; try{ obj = JSON.parse(ev.data); }catch(e){ return; }
+      var candles = null;
+      if (obj.result && obj.result.chart_sub) candles = obj.result.chart_sub.data;
+      else if (obj.params && obj.params.chart_update) candles = [obj.params.chart_update.update];
+      if (candles && candles.length){
+        var close = candles[candles.length - 1].close;
+        if (close != null){
+          done = true; clearTimeout(timer);
+          try{ ws.close(); }catch(e){}
+          rate = computeRate(Number(close));
+          setStatus('ok', 'Cotação atualizada', false);
+          render();
+        }
+      }
+    };
+    ws.onerror = function(){ if(done) return; done=true; clearTimeout(timer); fail(); };
+    ws.onclose  = function(){ if(done) return; done=true; clearTimeout(timer); fail(); };
+  }
+
+  elUsd.addEventListener('input', render);
+  fetchRate();
+</script>
+</body>
+</html>
